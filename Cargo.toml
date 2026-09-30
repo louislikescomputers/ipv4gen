@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ipgen-core",
+    "crates/ipgen-cli",
+    "crates/ipgen-mcp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/louislikescomputers/ipv4gen"
+
+[profile.release]
+lto = true
+codegen-units = 1

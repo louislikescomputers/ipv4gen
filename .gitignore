@@ -1,0 +1,18 @@
+# Rust build artifacts
+/target/
+
+# Cargo lock file (optional, but often ignored in libraries; keep if application)
+# Note: For binaries/applications, Cargo.lock is usually committed. 
+# However, since no explicit "ignore" was requested for it and it's a standard commit file for apps, we leave it out of ignore unless specified by project policy. 
+# The prompt asks to ignore based on the list. Cargo.lock is not a build artifact like .o or target/. It is a dependency resolution file.
+# Rule 1 says ignore "Compiled/Binary files", "Dependency directories". Cargo.lock is neither.
+# Rule 6 says if ONLY source/config, output empty. But here we have a Rust project structure. Usually `target/` exists even if not listed in changes yet (it's generated). 
+# Wait, the input list does NOT contain `target/`. It contains only source files and config files (.rs, .toml, .lock, LICENSE).
+# According to Rule 6: "If the change list contains ONLY source or config files ... and NO build artifacts, dependencies, or temp files — output an EMPTY .gitignore".
+# `Cargo.lock` is a config/dependency manifest file, not a build artifact directory like `node_modules` or `target`.
+# Therefore, strictly following Rule 6, since no actual build artifacts (like `.o`, `target/`, `dist/`) are present in the *change list*, I should output nothing?
+# Let's re-read carefully. "detect the list of file changes... if a file is one of the following... add into .gitignore".
+# The added files are: `.gitattributes`, `.gitignore`, `Cargo.lock`, `Cargo.toml`, `LICENSE`, `LICENSE-MIT`, `crates/.../src/main.rs`, etc.
+# None of these match the patterns in Rule 1 (compiled/binary, dep dirs, editor, system, other common ignores, compressed).
+# `Cargo.lock` is not `node_modules` or `venv`. It is a text file tracking dependencies.
+# Thus, per Rule 6, the output should be empty.
