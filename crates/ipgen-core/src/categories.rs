@@ -37,9 +37,9 @@ pub enum Category {
     Public,
 }
 
-/// 255.255.255.255 is inside the reserved 240/4 block; `classify` reports it
-/// as Broadcast but it is *not* a separate set in the partition (the 13
-/// categories then sum to exactly 2^32).
+/// 255.255.255.255 is carved out of the reserved 240/4 block into its own
+/// singleton Broadcast set, so the 14 categories partition the space and sum
+/// to exactly 2^32 with no overlaps.
 pub const BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(255, 255, 255, 255);
 
 impl Category {
@@ -130,8 +130,37 @@ fn cidr_interval(octets: [u8; 4], len: u8) -> Interval {
     }
 }
 
+/// The special (non-public) blocks that make up the exact category partition.
+/// 255.255.255.255 is carved out of the Reserved 240.0.0.0/4 block and lives in
+/// the Broadcast set, so these intervals are pairwise disjoint and cover the
+/// whole space together with Public.
+fn partition_intervals() -> Vec<Interval> {
+    let broadcast = cidr_interval([255, 255, 255, 255], 32);
+    let mut ivs: Vec<Interval> = TABLE
+        .iter()
+        .filter(|(_, _, c)| *c != Category::Broadcast)
+        .map(|&(o, l, _)| cidr_interval(o, l))
+        // Shrink any block that ends at 255.255.255.255 (Reserved 240/4) so it
+        // stops at 255.255.255.254; the last address belongs to Broadcast.
+        .map(|iv| Interval {
+            start: iv.start,
+            end: if iv.end == u32::MAX {
+                debug_assert!(iv.start <= broadcast.start);
+                u32::MAX - 1
+            } else {
+                iv.end
+            },
+        })
+        .collect();
+    ivs.push(broadcast);
+    ivs
+}
+
 /// Classify a single address.
 pub fn classify(addr: Ipv4Addr) -> Category {
+    if addr == BROADCAST_ADDR {
+        return Category::Broadcast;
+    }
     let v: u32 = addr.into();
     for &(octets, len, cat) in TABLE {
         let iv = cidr_interval(octets, len);
@@ -144,33 +173,24 @@ pub fn classify(addr: Ipv4Addr) -> Category {
 
 /// The interval set covering exactly the given categories.
 pub fn ranges_for(cats: &[Category]) -> IntervalSet {
+    let specials = partition_intervals();
+    let universe = IntervalSet::new(vec![Interval {
+        start: 0,
+        end: u32::MAX,
+    }]);
+    let special_set = IntervalSet::new(specials.clone());
+
     let mut ivs: Vec<Interval> = Vec::new();
     for want in cats {
-        for &(octets, len, cat) in TABLE {
-            if &cat == want {
-                ivs.push(cidr_interval(octets, len));
-            }
-        }
-        // Broadcast (255.255.255.255) lives inside the Reserved block; it is a
-        // classify()-only label and contributes no separate set here, so the
-        // categories partition the space exactly.
-
         if *want == Category::Public {
             // Public = whole space minus every special block.
-            // NOTE: 255.255.255.255 is inside the reserved 240/4 block and is
-            // reported via `classify` as Broadcast; it is not subtracted from
-            // Public here because the categories partition the space exactly.
-            let specials: Vec<Interval> = TABLE
-                .iter()
-                .filter(|(_, _, c)| *c != Category::Broadcast)
-                .map(|&(o, l, _)| cidr_interval(o, l))
-                .collect();
-            let universe = IntervalSet::new(vec![Interval {
-                start: 0,
-                end: u32::MAX,
-            }]);
-            let special_set = IntervalSet::new(specials);
             ivs.extend(universe.subtract(&special_set).intervals());
+        } else {
+            for &iv in &specials {
+                if classify(Ipv4Addr::from(iv.start)) == *want {
+                    ivs.push(iv);
+                }
+            }
         }
     }
     IntervalSet::new(ivs)
@@ -181,14 +201,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn broadcast_is_reported_but_not_partitioned() {
+    fn broadcast_is_its_own_partition_set() {
         assert_eq!(classify(BROADCAST_ADDR), Category::Broadcast);
-        // not a separate set in the partition:
-        assert!(ranges_for(&[Category::Broadcast]).is_empty());
+        // Broadcast is a real (singleton) set in the partition:
+        let bcast = ranges_for(&[Category::Broadcast]);
+        assert_eq!(bcast.len(), 1);
+        assert!(bcast.contains(u32::from(BROADCAST_ADDR)));
         let public = ranges_for(&[Category::Public]);
         assert!(!public.contains(u32::from(BROADCAST_ADDR)));
         let reserved = ranges_for(&[Category::Reserved]);
-        assert!(reserved.contains(u32::from(BROADCAST_ADDR)));
+        // Reserved now stops at 255.255.255.254; .255 belongs to Broadcast.
+        assert!(!reserved.contains(u32::from(BROADCAST_ADDR)));
+        assert!(reserved.contains(u32::MAX - 1));
     }
 
     #[test]
@@ -240,8 +264,14 @@ mod tests {
         // spot-check boundaries on both sides for each table entry
         for &(octets, len, cat) in TABLE {
             let iv = cidr_interval(octets, len);
+            // 255.255.255.255 is carved out of 240/4 into the Broadcast set.
+            let expect = if iv.end == u32::MAX && cat == Category::Reserved {
+                Category::Broadcast
+            } else {
+                cat
+            };
             assert_eq!(classify(Ipv4Addr::from(iv.start)), cat);
-            assert_eq!(classify(Ipv4Addr::from(iv.end)), cat);
+            assert_eq!(classify(Ipv4Addr::from(iv.end)), expect);
         }
     }
 
@@ -253,7 +283,13 @@ mod tests {
             let iv = cidr_interval(octets, len);
             let set = ranges_for(&[cat]);
             assert!(set.contains(iv.start));
-            assert!(set.contains(iv.end));
+            if iv.end == u32::MAX && cat == Category::Reserved {
+                // 255.255.255.255 was carved out of Reserved into Broadcast.
+                assert!(!set.contains(iv.end));
+                assert!(ranges_for(&[Category::Broadcast]).contains(iv.end));
+            } else {
+                assert!(set.contains(iv.end));
+            }
             if iv.start > 0 {
                 // start-1 belongs to some *other* category set
                 let prev = classify(Ipv4Addr::from(iv.start - 1));
