@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "session_id": "6abcc4f6-161b-00000000",
+  "config": {
+    "categories": [
+      "this-network",
+      "private",
+      "shared-cgnat",
+      "loopback",
+      "link-local",
+      "ietf-protocol",
+      "documentation",
+      "deprecated6to4",
+      "benchmarking",
+      "multicast",
+      "reserved",
+      "broadcast",
+      "public"
+    ],
+    "extra_include": [],
+    "extra_exclude": [],
+    "order": {
+      "order": "permuted",
+      "params": {
+        "seed": 99
+      }
+    },
+    "shard": {
+      "index": 0,
+      "count": 1
+    }
+  },
+  "config_hash": 16145446169603702680,
+  "total": 4294967296,
+  "cursor": 200,
+  "emitted": 200,
+  "created_at": 1790756086,
+  "updated_at": 1790756086
+}
