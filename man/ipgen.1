@@ -1,0 +1,489 @@
+.TH IPGEN 1 "2026-09-30" "ipgen 0.1.0" "User Commands"
+.SH NAME
+ipgen \- algorithmic IPv4 range generator with pause and resume
+.SH SYNOPSIS
+.B ipgen
+.RI [ command ]
+.RI [ options ]
+.br
+.B ipgen generate
+.RB [ --preset
+.IR PRESET ]
+.RB [ --categories
+.IR CAT ,...]
+.RB [ --include
+.IR SPEC ]...
+.RB [ --exclude
+.IR SPEC ]...
+.RB [ --order
+.IR ORDER ]
+.RB [ --seed
+.IR N ]
+.RB [ --prefix-len
+.IR N ]
+.RB [ --shard
+.IR K/M ]
+.RB [ --count
+.IR N ]
+.RB [ --batch
+.IR N ]
+.RB [ --format
+.IR FORMAT ]
+.RB [ --out
+.IR FILE ]
+.RB [ --checkpoint-every
+.IR N ]
+.RB [ --state
+.IR FILE ]
+.br
+.B ipgen resume
+.RB [ --state
+.IR FILE ]
+.RB [ --batch
+.IR N ]
+.RB [ --count
+.IR N ]
+.RB [ --format
+.IR FORMAT ]
+.RB [ --out
+.IR FILE ]
+.RB [ --checkpoint-every
+.IR N ]
+.br
+.B ipgen status
+.RB [ --state
+.IR FILE ]
+.br
+.B ipgen categories
+.RB [ --detailed ]
+.br
+.B ipgen ranges
+.RB [ --preset
+.IR PRESET ]
+.RB [ --categories
+.IR CAT ,...]
+.RB [ --include
+.IR SPEC ]...
+.RB [ --exclude
+.IR SPEC ]...
+.RB [ --summary ]
+.SH DESCRIPTION
+.B ipgen
+is a small, fast, dependency-light Rust tool that algorithmically
+enumerates IPv4 addresses, CIDRs, and aligned
+.I /prefix
+blocks. There are no pre-generated lists on disk and no databases;
+the next address is computed on demand from a tiny piece of state
+.RI ( (config,\ cursor) )
+that fits in a JSON file. That state is enough to stop a run at any
+moment and continue later \(em in another process, on another machine,
+after a crash, or after a reboot \(em with no duplicates and no gaps.
+
+.PP
+The tool is organised as a Cargo workspace with three crates:
+.TP
+.B ipgen-core
+the library: all generator logic, no networking code.
+.TP
+.B ipgen-cli
+the
+.B ipgen
+binary that most users will run.
+.TP
+.B ipgen-mcp
+the
+.B ipgen-mcp
+binary, a stdio Model Context Protocol (MCP) server for AI agents.
+
+.PP
+.B STRICT NON-GOAL:
+.B ipgen
+only enumerates addresses. It contains no sockets, no probing, no
+port scanning, no DNS. Use the output only against networks you own
+or are explicitly authorised to examine.
+
+.SH COMMANDS
+.TP
+.BR generate " (default)"
+Generate a stream of addresses or CIDRs. Honours the selection
+arguments (\fB--preset\fR, \fB--categories\fR, \fB--include\fR,
+\fB--exclude\fR), the ordering arguments (\fB--order\fR, \fB--seed\fR,
+\fB--prefix-len\fR), the sharding argument (\fB--shard\fR), and the
+output arguments (\fB--count\fR, \fB--batch\fR, \fB--format\fR,
+\fB--out\fR, \fB--checkpoint-every\fR, \fB--state\fR).
+.TP
+.B resume
+Resume generation from a checkpoint file written by a previous run or
+by an interrupted
+.B generate
+call. Honours \fB--state\fR, \fB--batch\fR, \fB--count\fR,
+\fB--format\fR, \fB--out\fR, \fB--checkpoint-every\fR.
+.TP
+.B status
+Print session state (session id, config hash, order, shard, cursor,
+total, percent, remaining, timestamps) without generating. Honours
+\fB--state\fR.
+.TP
+.B categories
+List the 13 built-in IANA special-purpose categories with their sizes
+and percentages of the full \(2^32\) space. With \fB--detailed\fR, also
+print the actual CIDRs per category.
+.TP
+.B ranges
+Print the maximal aligned CIDR blocks covering the selected address
+set. With \fB--summary\fR, print a compact JSON summary
+.RI ( {"cidr_count":N,"total_addresses":M} )
+instead of the full CIDR list.
+
+.SH SELECTION OPTIONS
+.TP
+.BR --preset = PRESET
+Shorthand for a category list. One of:
+.B public
+(default),
+.B private,
+.B all,
+.BR "public+private" .
+.TP
+.BR --categories = CAT1,CAT2,...
+Explicit comma-separated list of category names, overriding
+\fB--preset\fR. Valid names (case-insensitive, hyphens or underscores
+interchangeable):
+.BR this-network ,
+.BR private ,
+.BR shared-cgnat ,
+.BR loopback ,
+.BR link-local ,
+.BR ietf-protocol ,
+.BR documentation
+.RI ( or docs ),
+.BR deprecated-6to4
+.RI ( or 6to4 ),
+.BR benchmarking ,
+.BR multicast ,
+.BR reserved ,
+.BR broadcast ,
+.BR public .
+.TP
+.BR --include = SPEC
+Extra included CIDR, range
+.RI ( a.b.c.d-e.f.g.h ),
+or single address. Repeatable. Specs are unioned with the preset /
+categories selection.
+.TP
+.BR --exclude = SPEC
+Extra excluded CIDR, range, or single address. Repeatable. Specs are
+subtracted from the selection after includes are applied.
+
+.SH ORDERING OPTIONS
+.TP
+.BR --order = ORDER
+How to map the cursor to an output position. One of:
+.RS
+.IP \(bu 3
+.B sequential
+\(em ascending order over the allowed set. Fastest path; bulk-fills
+the output buffer interval by interval with no per-address binary
+search. Use when you do not need spread.
+.IP \(bu 3
+.B permuted
+(default) \(em keyed pseudo-random bijection over
+.I [0,\ N)
+implemented as a cycle-walking balanced Feistel network. Not
+cryptographic; it is a cheap deterministic spread suitable for survey
+workloads. Use this when you want addresses spread across the whole
+internet rather than clustered in one subnet.
+.IP \(bu 3
+.B blocks
+\(em iterate aligned
+.I /prefix-len
+blocks (default
+.IR /24 )
+in permuted order. Each emitted line is a CIDR plus (in
+.B jsonl
+or
+.B csv
+formats) the count of allowed addresses that fall inside the block.
+Use for block-level mapping or for feeding into
+.BR nmap\ -iL .
+.RE
+.TP
+.BR --seed = N
+Seed for the
+.B permuted
+and
+.B blocks
+orderings. Same
+.RI ( seed,\ config )
+always yields the same sequence (reproducible runs). Default
+.BR 0 .
+.TP
+.BR --prefix-len = N
+Block prefix length for
+.B blocks
+order (8..=32, default 24). Ignored for other orders.
+
+.SH SHARDING
+.TP
+.BR --shard = K/M
+Run as worker
+.I K
+of
+.I M
+total. Emit indices
+.I i
+where
+.IR "i % M == K" .
+Shards are pairwise disjoint and together cover the full stream
+exactly once. Each shard needs its own
+.B --state
+and
+.B --out
+files. Default
+.BR 0/1 .
+
+.SH OUTPUT OPTIONS
+.TP
+.BR --count = N
+Emit at most
+.I N
+items. Default: emit until the stream is exhausted or
+.B Ctrl-C
+is received.
+.TP
+.BR --batch = N
+Batch size per internal call (default 4096, max 1048576). Larger
+batches are more efficient but use more memory. For high-throughput
+runs to a file, use 65536 or larger.
+.TP
+.BR --format = FORMAT
+Output format. One of:
+.RS
+.IP \(bu 3
+.B text
+(default) \(em one address (or CIDR) per line.
+.IP \(bu 3
+.B jsonl
+\(em one JSON object per line:
+.RI ( {"index":I,"address":"A","category":"C"} )
+for addresses,
+.RI ( {"index":I,"cidr":"C","count":N} )
+for blocks.
+.IP \(bu 3
+.B csv
+\(em three columns
+.RI ( index,address,category )
+or
+.RI ( index,cidr,count )
+with a header row.
+.RE
+.TP
+.BR --out = FILE
+Write to
+.I FILE
+instead of stdout. The file is opened fresh on
+.B generate
+and appended to on
+.B resume
+\(em use the same
+.B --out
+across pause/resume to keep the output contiguous.
+.TP
+.BR --checkpoint-every = N
+Write a checkpoint every
+.I N
+batches (0 = only at exit). With the default batch size of 4096,
+.IR N =1000
+writes a checkpoint roughly every 4 million addresses.
+.TP
+.BR --state = FILE
+Path for the checkpoint file (default
+.IR ipgen.state.json ).
+The checkpoint stores
+.RI ( config,\ cursor )
+plus a content hash; tampering with the config without recomputing
+the hash is refused on load.
+
+.SH EXIT CODES
+.TP
+.B 0
+Success.
+.TP
+.B 2
+Usage error (bad flag, unknown category, empty selection, etc.).
+.TP
+.B 130
+.B Ctrl-C
+(or
+.BR SIGINT )
+\(em after the checkpoint has been flushed.
+.TP
+.B 3
+Output pipe closed (e.g. when piped into
+.BR "head\ -n\ N" );
+the generator exits cleanly.
+
+.SH SIGNALS
+.TP
+.B SIGINT
+(Ctrl-C)
+Flush the current checkpoint and exit with code 130. The state file
+is written atomically; resume with
+.B ipgen\ resume
+to continue from the saved cursor.
+
+.SH EXAMPLES
+.TP
+Print the 13 built-in categories and their sizes:
+.B ipgen categories
+.TP
+Print the categories with the actual CIDRs per category:
+.B ipgen categories --detailed
+.TP
+Generate the first 5 public IPv4 addresses in ascending order:
+.B ipgen generate --preset public --order sequential --count 5
+.TP
+Generate 10 public addresses in permuted order with a fixed seed:
+.B ipgen generate --preset public --order permuted --seed 42 --count 10
+.TP
+Generate all public IPv4 addresses in order (3.7 billion addresses):
+.B ipgen generate --preset public --order sequential --batch 65536 --checkpoint-every 1000 --state public-run.state.json --out public-ipv4.txt
+.TP
+Generate the private (RFC 1918) addresses:
+.B ipgen generate --preset private --order sequential
+.TP
+Generate CIDR blocks instead of addresses:
+.B ipgen generate --preset public --order blocks --prefix-len 24 --count 5
+.TP
+Generate with custom includes and excludes:
+.B ipgen generate --preset public --include 9.9.9.0/24 --exclude 9.9.9.128/25 --order sequential
+.TP
+Start a long run, pause with Ctrl-C, inspect, resume:
+.nf
+.RS
+ipgen generate --preset public --order permuted --seed 7 --out addrs.txt --checkpoint-every 100
+# Ctrl-C
+ipgen status --state ipgen.state.json
+ipgen resume --state ipgen.state.json --out addrs.txt
+.RE
+.fi
+.TP
+Run 4 shards in parallel on one machine:
+.nf
+.RS
+for k in 0 1 2 3; do
+  ipgen generate --preset public --order permuted --seed 7 \\
+    --shard $k/4 --state shard-$k.state.json --out shard-$k.txt &
+done
+wait
+.RE
+.fi
+.TP
+Print the merged CIDR list for the private set:
+.B ipgen ranges --preset private
+.TP
+Print a compact JSON summary for the public set:
+.B ipgen ranges --preset public --summary
+.PD
+.RE
+
+.SH ENVIRONMENT
+.TP
+.B IPGEN_BIN
+Used by the
+.IR skills/ipgen/scripts/ipgen.sh
+wrapper to locate the
+.B ipgen
+binary. Resolution order:
+.BR $IPGEN_BIN ,
+.IR ./dist/ipgen ,
+.IR ./bin/<platform>/ipgen ,
+.IR ./target/release/ipgen ,
+then
+.B PATH
+lookup.
+.TP
+.B RUST_LOG
+Respected by
+.B ipgen-mcp
+for log filtering. Default
+.BR off .
+
+.SH FILES
+.TP
+.B ipgen.state.json
+Default checkpoint file. Stores
+.RI ( config,\ cursor )
+plus a content hash. Written atomically via temp file + fsync + rename.
+A crash at any point leaves either the previous checkpoint intact or a
+temp file alongside it; the loader never sees a half-written file.
+
+.SH SEE ALSO
+.PP
+Full documentation in the source tree:
+.TP
+.B README.md
+project overview, 60-second quick start.
+.TP
+.B docs/ALGORITHM.md
+how the generator works internally: interval sets, prefix sums,
+cycle-walking Feistel, sharding.
+.TP
+.B docs/API.md
+Rust library
+.RI ( ipgen-core )
+API reference.
+.TP
+.B docs/MCP.md
+MCP server protocol reference.
+.TP
+.B docs/EXAMPLES.md
+cookbook of useful CLI and MCP examples.
+.TP
+.B docs/AGENTS.md
+agent-facing guide for AI assistants.
+.TP
+.B guides/getting-started.md
+0 to first batch in 5 minutes.
+.TP
+.B guides/installation.md
+per-OS build instructions.
+.TP
+.B guides/pause-resume.md
+exact pause/resume semantics.
+.TP
+.B guides/sharding.md
+splitting work across N workers.
+.TP
+.B guides/mcp-clients.md
+wiring
+.B ipgen-mcp
+into Claude Desktop, Cursor, and generic MCP clients.
+
+.SH BUGS
+.PP
+Report bugs at
+.UR https://github.com/louislikescomputers/ipv4gen/issues
+.UE .
+Pull requests welcome; please run
+.BR "cargo fmt --check" ,
+.BR "cargo clippy --workspace --all-targets -- -D warnings" ,
+and
+.B "cargo test --workspace"
+before submitting.
+
+.SH LICENSE
+.PP
+Dual-licensed under MIT OR Apache-2.0, at your option. See
+.B LICENSE
+and
+.B LICENSE-MIT
+in the source repository for the full text.
+
+.SH AUTHORS
+.PP
+Maintained by
+.MT louislikescomputers@users.noreply.github.com
+louislikescomputers
+.ME .
+Contributions welcome via pull request.

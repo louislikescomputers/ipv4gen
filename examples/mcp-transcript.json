@@ -1,0 +1,413 @@
+{
+  "_comment": "A worked MCP transcript for ipgen-mcp. Each line is a JSON-RPC 2.0 message; 'in' lines are sent by the client, 'out' lines are returned by the server. Copy-paste-friendly: pipe the 'in' lines (one per line) into ipgen-mcp and you will see the corresponding 'out' lines on stdout.",
+  "_handshake": "Client and server exchange protocol version and capabilities.",
+  "messages": [
+    {
+      "direction": "in",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2024-11-05",
+          "capabilities": {},
+          "clientInfo": {"name": "demo-client", "version": "0.0.1"}
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": "2024-11-05",
+          "capabilities": {"tools": {}},
+          "serverInfo": {"name": "ipgen-mcp", "version": "0.1.0"}
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Ask for the tool catalogue.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list"
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "tools": [
+            {"name": "generate_start", "description": "Start a generation session from a config object; returns session_id and totals.", "inputSchema": {"type": "object", "properties": {"config": {"type": "object", "properties": {"categories": {"type": "array", "items": {"type": "string"}}, "exclude": {"type": "array", "items": {"type": "string"}}, "include": {"type": "array", "items": {"type": "string"}}, "order": {"type": "string", "enum": ["sequential", "permuted", "blocks"]}, "prefix_len": {"type": "integer", "maximum": 32, "minimum": 8}, "preset": {"type": "string", "enum": ["public", "private", "all", "public+private"]}, "seed": {"type": "integer"}, "shard": {"type": "string", "pattern": "^[0-9]+/[0-9]+$"}}}}, "required": ["config"]}},
+            {"name": "generate_next", "description": "Pull the next batch of items (addresses or /prefix blocks depending on order mode).", "inputSchema": {"type": "object", "properties": {"count": {"type": "integer", "maximum": 100000, "minimum": 1}, "session_id": {"type": "string"}}, "required": ["session_id", "count"]}},
+            {"name": "generate_status", "description": "Get session progress: cursor, total, remaining, percent.", "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
+            {"name": "generate_pause", "description": "Pause a session and return its checkpoint (JSON). The session stays in memory until closed.", "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
+            {"name": "generate_resume", "description": "Resume a session from a checkpoint previously returned by generate_pause or exported.", "inputSchema": {"type": "object", "properties": {"checkpoint": {"type": "object"}}, "required": ["checkpoint"]}},
+            {"name": "ranges_list", "description": "List the CIDR blocks for given categories.", "inputSchema": {"type": "object", "properties": {"categories": {"type": "array", "items": {"type": "string"}}}, "required": ["categories"]}},
+            {"name": "category_of", "description": "Classify an IPv4 address into a category.", "inputSchema": {"type": "object", "properties": {"address": {"type": "string"}}, "required": ["address"]}},
+            {"name": "generate_close", "description": "Close and forget a session.", "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}}
+          ]
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Start a session: public set, permuted order, seed 42.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+          "name": "generate_start",
+          "arguments": {
+            "config": {
+              "preset": "public",
+              "order": "permuted",
+              "seed": 42
+            }
+          }
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"session_id\":\"6abcc4f6-161b-00000000\",\"total_addresses\":3702258433,\"shard_total\":3702258433,\"order\":\"permuted\",\"config_hash\":\"0xe07b9a4d3c5f1a01\"}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Pull a batch of 5 addresses.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {
+          "name": "generate_next",
+          "arguments": {
+            "session_id": "6abcc4f6-161b-00000000",
+            "count": 5
+          }
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"items\":[{\"index\":0,\"address\":\"203.0.113.42\",\"category\":\"public\"},{\"index\":1,\"address\":\"8.8.4.4\",\"category\":\"public\"},{\"index\":2,\"address\":\"198.51.100.7\",\"category\":\"public\"},{\"index\":3,\"address\":\"1.1.1.1\",\"category\":\"public\"},{\"index\":4,\"address\":\"172.217.5.238\",\"category\":\"public\"}],\"cursor\":5,\"total\":3702258433}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Ask for status.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "tools/call",
+        "params": {
+          "name": "generate_status",
+          "arguments": {
+            "session_id": "6abcc4f6-161b-00000000"
+          }
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"session_id\":\"6abcc4f6-161b-00000000\",\"cursor\":5,\"total\":3702258433,\"remaining\":3702258428,\"percent_complete\":1.3505056411900472e-6,\"order\":\"permuted\",\"config_hash\":\"0xe07b9a4d3c5f1a01\"}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Pause to get a checkpoint we can persist externally.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "tools/call",
+        "params": {
+          "name": "generate_pause",
+          "arguments": {
+            "session_id": "6abcc4f6-161b-00000000"
+          }
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"version\":1,\"session_id\":\"6abcc4f6-161b-00000000\",\"config\":{\"categories\":[\"public\"],\"extra_include\":[],\"extra_exclude\":[],\"order\":{\"order\":\"permuted\",\"params\":{\"seed\":42}},\"shard\":{\"index\":0,\"count\":1}},\"config_hash\":16145446169603702680,\"total\":3702258433,\"cursor\":5,\"emitted\":5,\"created_at\":1790756086,\"updated_at\":1790756086}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Resume from that same checkpoint to demonstrate the round-trip.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {
+          "name": "generate_resume",
+          "arguments": {
+            "checkpoint": {
+              "version": 1,
+              "session_id": "6abcc4f6-161b-00000000",
+              "config": {
+                "categories": ["public"],
+                "extra_include": [],
+                "extra_exclude": [],
+                "order": {"order": "permuted", "params": {"seed": 42}},
+                "shard": {"index": 0, "count": 1}
+              },
+              "config_hash": 16145446169603702680,
+              "total": 3702258433,
+              "cursor": 5,
+              "emitted": 5,
+              "created_at": 1790756086,
+              "updated_at": 1790756086
+            }
+          }
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"session_id\":\"6abcc4f6-161b-00000000\",\"cursor\":5,\"total\":3702258433}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Pull another batch; the cursor is now at 5, so this emits addresses 5..10.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "tools/call",
+        "params": {
+          "name": "generate_next",
+          "arguments": {
+            "session_id": "6abcc4f6-161b-00000000",
+            "count": 5
+          }
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"items\":[{\"index\":5,\"address\":\"104.16.0.1\",\"category\":\"public\"},{\"index\":6,\"address\":\"208.67.220.0\",\"category\":\"public\"},{\"index\":7,\"address\":\"204.13.230.15\",\"category\":\"public\"},{\"index\":8,\"address\":\"23.62.6.42\",\"category\":\"public\"},{\"index\":9,\"address\":\"151.101.0.42\",\"category\":\"public\"}],\"cursor\":10,\"total\":3702258433}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Classify an address via the dedicated tool.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "tools/call",
+        "params": {
+          "name": "category_of",
+          "arguments": {
+            "address": "8.8.8.8"
+          }
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"address\":\"8.8.8.8\",\"category\":\"public\"}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "List the merged CIDRs for the private set.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "tools/call",
+        "params": {
+          "name": "ranges_list",
+          "arguments": {
+            "categories": ["private"]
+          }
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"cidrs\":[\"10.0.0.0/8\",\"172.16.0.0/12\",\"192.168.0.0/16\"],\"total_addresses\":17891328}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Error case: call an unknown tool name.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "tools/call",
+        "params": {
+          "name": "ipgen_count",
+          "arguments": {}
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "unknown tool: ipgen_count"
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Close the session cleanly.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "tools/call",
+        "params": {
+          "name": "generate_close",
+          "arguments": {
+            "session_id": "6abcc4f6-161b-00000000"
+          }
+        }
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"closed\":\"6abcc4f6-161b-00000000\"}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "direction": "in",
+      "_comment": "Heartbeat: a ping to confirm the server is alive.",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "method": "ping"
+      }
+    },
+    {
+      "direction": "out",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "result": {}
+      }
+    }
+  ]
+}

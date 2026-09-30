@@ -1,0 +1,156 @@
+# Example: Generate All Public IPv4 Addresses In Order
+
+This file demonstrates the canonical "give me everything" command
+for `ipgen`. It produces the complete public IPv4 address space in
+ascending order, which is 3,702,258,433 addresses — the full 2^32
+space minus the 592,708,863 addresses in IANA special-use blocks
+(this-network, private, shared-cgnat, loopback, link-local,
+ietf-protocol, documentation, deprecated-6to4, benchmarking,
+multicast, reserved, broadcast).
+
+## Command
+
+    ipgen generate \
+      --preset public \
+      --order sequential \
+      --format text \
+      --batch 65536 \
+      --checkpoint-every 1000 \
+      --state public-run.state.json \
+      --out public-ipv4.txt
+
+## Why each flag
+
+- `--preset public` — emit only the public address set (the
+  complement of every IANA special-use block).
+- `--order sequential` — ascending order. Fastest path; reproducible
+  without a seed; output is easy to slice with `head`, `tail`,
+  `split`, `shuf`, etc.
+- `--format text` — one address per line. About 7 bytes per
+  address; the full file is ~25 GB. Use `gzip -9` or `pigz` on the
+  fly if disk space is a concern.
+- `--batch 65536` — 64k addresses per internal call. The bulk-fill
+  fast path scales linearly with batch size; throughput is north of
+  200 M addresses/sec on a modern CPU.
+- `--checkpoint-every 1000` — flush a checkpoint every 1000 batches
+  (about every 65 million addresses). Fine-grained enough that a
+  mid-run crash loses at most a minute of work; coarse enough that
+  checkpoint I/O does not dominate.
+- `--state public-run.state.json` — explicit checkpoint path so
+  multiple jobs do not stomp on the default `ipgen.state.json`.
+- `--out public-ipv4.txt` — write to a file rather than stdout.
+  Buffered file I/O is the right call for a 25 GB output.
+
+## What to expect
+
+The first 10 lines of `public-ipv4.txt`:
+
+    1.0.0.0
+    1.0.0.1
+    1.0.0.2
+    1.0.0.3
+    1.0.0.4
+    1.0.0.5
+    1.0.0.6
+    1.0.0.7
+    1.0.0.8
+    1.0.0.9
+
+The last 10 lines:
+
+    223.255.255.246
+    223.255.255.247
+    223.255.255.248
+    223.255.255.249
+    223.255.255.250
+    223.255.255.251
+    223.255.255.252
+    223.255.255.253
+    223.255.255.254
+    223.255.255.255
+
+(The public set ends at 223.255.255.255 because 224.0.0.0/4 is the
+multicast block and 240.0.0.0/4 is reserved.)
+
+## Verifying the total before starting
+
+Run this before the long enumeration to confirm the count:
+
+    ipgen ranges --preset public --summary
+    # {"cidr_count":2783,"total_addresses":3702258433}
+
+The 2,783 CIDR blocks merge-cover the public space; the 3,702,258,433
+count matches the arithmetic:
+
+    2^32 = 4,294,967,296
+    specials = 592,708,863
+    public = 4,294,967,296 - 592,708,863 = 3,702,258,433
+
+## Resuming if interrupted
+
+If the run is killed — Ctrl-C, power loss, OOM, etc. — resume with:
+
+    ipgen resume \
+      --state public-run.state.json \
+      --out public-ipv4.txt \
+      --batch 65536 \
+      --checkpoint-every 1000
+
+The output file keeps appending; no duplicates, no gaps relative to the
+uninterrupted run. Inspect progress before resuming:
+
+    ipgen status --state public-run.state.json
+    # session_id:  ...
+    # cursor:      1_500_000_000 / 3_702_258_433 (40.52% complete)
+    # remaining:   2_202_258_433
+
+## A sharded variant
+
+If a single process cannot saturate your I/O, run four shards in
+parallel:
+
+    for k in 0 1 2 3; do
+      ipgen generate \
+        --preset public \
+        --order sequential \
+        --shard $k/4 \
+        --batch 65536 \
+        --checkpoint-every 1000 \
+        --state public-run-shard-$k.state.json \
+        --out public-ipv4-shard-$k.txt &
+    done
+    wait
+
+Each shard writes its own file; the union is the complete public set
+(though out of order — to recover ascending order, `sort -n` the
+concatenated shards). Each shard can be resumed independently.
+
+## A blocks variant
+
+If you want a list of aligned /24 CIDR blocks instead of individual
+addresses (useful for `nmap -iL`), use `--order blocks`:
+
+    ipgen generate \
+      --preset public \
+      --order blocks \
+      --prefix-len 24 \
+      --format text \
+      --batch 65536 \
+      --checkpoint-every 1000 \
+      --state public-blocks.state.json \
+      --out public-ipv4-blocks.txt
+
+The output is one CIDR per line:
+
+    1.0.0.0/24
+    1.0.1.0/24
+    1.0.2.0/24
+    ...
+
+The total number of /24 blocks in the public set is computed by:
+
+    ipgen ranges --preset public --summary
+    # 2,783 CIDRs (this is the merged count, not the /24 count)
+
+The actual /24 count is closer to 14.5 million; the merge is more
+aggressive than /24s.
